@@ -7,25 +7,92 @@ import { Zap, FileText, Sparkles, Cpu, AlertCircle } from 'lucide-react'
 
 const GOOGLE_REDIRECT_URI = `${window.location.origin}/login`
 
+/* ── Mobile-responsive styles injected once ─────────────────────────────── */
+const MOBILE_CSS = `
+  .login-root {
+    min-height: 100vh;
+    background: var(--bg-base);
+    display: flex;
+    flex-direction: row;
+  }
+  .login-left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 60px;
+    background: linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%);
+    border-right: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  .login-right {
+    width: 480px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 60px 48px;
+  }
+  .login-right-inner {
+    width: 100%;
+    max-width: 360px;
+  }
+
+  /* ── Tablet (≤ 900px): hide branding panel, full-width form ── */
+  @media (max-width: 900px) {
+    .login-left  { display: none; }
+    .login-right {
+      width: 100%;
+      padding: 48px 32px;
+      min-height: 100vh;
+      justify-content: center;
+    }
+    .login-right-inner { max-width: 420px; margin: 0 auto; }
+  }
+
+  /* ── Mobile (≤ 480px): tighter padding ─────────────────────── */
+  @media (max-width: 480px) {
+    .login-right { padding: 36px 20px; }
+    .login-right-inner { max-width: 100%; }
+    .login-brand-mobile { display: flex !important; }
+  }
+
+  /* Mobile brand header — hidden on desktop, shown on mobile */
+  .login-brand-mobile {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 40px;
+  }
+`
+
 export default function LoginPage() {
   const { token, setAuth } = useStore()
   const navigate = useNavigate()
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState('')
+  const [loading,         setLoading]         = useState(false)
+  const [error,           setError]           = useState('')
   const [processingOAuth, setProcessingOAuth] = useState(false)
-  // Prevent React StrictMode from firing the OAuth exchange twice
   const oauthCalledRef = useRef(false)
 
-  // Already logged in → go straight to dashboard
+  // Inject CSS once
+  useEffect(() => {
+    if (document.getElementById('login-mobile-css')) return
+    const el = document.createElement('style')
+    el.id        = 'login-mobile-css'
+    el.textContent = MOBILE_CSS
+    document.head.appendChild(el)
+    return () => el.remove()
+  }, [])
+
   useEffect(() => {
     if (token) navigate('/dashboard', { replace: true })
   }, [token, navigate])
 
-  // On mount: check if Google redirected back with ?code=
   useEffect(() => {
-    const params    = new URLSearchParams(window.location.search)
-    const code      = params.get('code')
-    const oauthErr  = params.get('error')
+    const params   = new URLSearchParams(window.location.search)
+    const code     = params.get('code')
+    const oauthErr = params.get('error')
 
     if (oauthErr) {
       setError('Google sign-in was cancelled or denied. Please try again.')
@@ -33,10 +100,8 @@ export default function LoginPage() {
       return
     }
     if (code) {
-      // Guard: React StrictMode fires effects twice in dev — only process once
       if (oauthCalledRef.current) return
       oauthCalledRef.current = true
-      // Remove the code from the URL immediately so a reload doesn't re-submit it
       window.history.replaceState({}, '', '/login')
       setProcessingOAuth(true)
       handleGoogleCallback(code)
@@ -59,8 +124,8 @@ export default function LoginPage() {
       const status = err.response?.status
       const detail = err.response?.data?.detail
       let msg = 'Sign-in failed. Please try again.'
-      if (!err.response)          msg = 'Cannot reach server. Is the backend running on port 8000?'
-      else if (status === 400)    msg = 'Google code expired. Please sign in again.'
+      if (!err.response)               msg = 'Cannot reach server.'
+      else if (status === 400)         msg = 'Google code expired. Please sign in again.'
       else if (typeof detail === 'string') msg = detail
       setError(msg)
     } finally {
@@ -80,7 +145,7 @@ export default function LoginPage() {
     } catch (err) {
       const detail = err.response?.data?.detail
       let msg = 'Failed to start Google sign-in.'
-      if (!err.response)               msg = 'Cannot reach server. Is the backend running on port 8000?'
+      if (!err.response)               msg = 'Cannot reach server.'
       else if (typeof detail === 'string') msg = detail
       setError(msg)
       setLoading(false)
@@ -93,7 +158,6 @@ export default function LoginPage() {
     { icon: Cpu,      text: 'Professional formatting & ATS optimisation' },
   ]
 
-  // Full-screen spinner while exchanging the OAuth code
   if (processingOAuth) {
     return (
       <div style={{
@@ -108,11 +172,7 @@ export default function LoginPage() {
           borderRadius: '50%',
           animation: 'spin 0.8s linear infinite',
         }} />
-        <div style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '18px',
-          color: 'var(--text-secondary)',
-        }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: '18px', color: 'var(--text-secondary)' }}>
           Signing you in…
         </div>
       </div>
@@ -120,20 +180,15 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex' }}>
+    <div className="login-root">
 
-      {/* ── Left panel – branding ─────────────────────────────────────────── */}
-      <div style={{
-        flex: 1, display: 'flex', flexDirection: 'column',
-        justifyContent: 'center', padding: '60px',
-        background: 'linear-gradient(135deg, #0a0a0f 0%, #0f0f1a 100%)',
-        borderRight: '1px solid var(--border)',
-        position: 'relative', overflow: 'hidden',
-      }}>
+      {/* ── Left panel — branding (hidden on mobile) ─────────────────────── */}
+      <div className="login-left">
         <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(108,99,255,0.08) 0%, transparent 70%)' }} />
-        <div style={{ position: 'absolute', bottom: '-80px', left: '-80px',  width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(0,212,170,0.06) 0%, transparent 70%)'  }} />
+        <div style={{ position: 'absolute', bottom: '-80px', left: '-80px', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(0,212,170,0.06) 0%, transparent 70%)' }} />
 
         <div style={{ position: 'relative', zIndex: 1 }}>
+          {/* Logo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '64px' }}>
             <div style={{ width: '44px', height: '44px', background: 'linear-gradient(135deg, var(--accent), var(--accent2))', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 32px rgba(108,99,255,0.4)' }}>
               <Zap size={22} color="white" />
@@ -163,9 +218,18 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* ── Right panel – sign-in form ────────────────────────────────────── */}
-      <div style={{ width: '480px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '60px 48px' }}>
-        <div style={{ width: '100%', maxWidth: '360px' }}>
+      {/* ── Right panel — sign-in form ────────────────────────────────────── */}
+      <div className="login-right">
+        <div className="login-right-inner">
+
+          {/* Brand shown only on mobile (left panel is hidden) */}
+          <div className="login-brand-mobile">
+            <div style={{ width: '36px', height: '36px', background: 'linear-gradient(135deg, var(--accent), var(--accent2))', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Zap size={18} color="white" />
+            </div>
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '20px', letterSpacing: '-0.03em' }}>DocuFlow</span>
+          </div>
+
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 700, letterSpacing: '-0.03em', marginBottom: '8px' }}>
             Get started
           </h2>
@@ -203,10 +267,13 @@ export default function LoginPage() {
           </button>
 
           <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', marginTop: '24px', lineHeight: 1.5 }}>
-            By continuing, you agree to our <a href="/terms" style={{color:"var(--accent-light)",textDecoration:"none",borderBottom:"1px solid rgba(139,132,255,0.3)"}}>Terms of Service</a> and <a href="/privacy" style={{color:"var(--accent-light)",textDecoration:"none",borderBottom:"1px solid rgba(139,132,255,0.3)"}}>Privacy Policy</a>.
+            By continuing, you agree to our{' '}
+            <a href="/terms"   style={{ color: 'var(--accent-light)', textDecoration: 'none', borderBottom: '1px solid rgba(139,132,255,0.3)' }}>Terms of Service</a>
+            {' '}and{' '}
+            <a href="/privacy" style={{ color: 'var(--accent-light)', textDecoration: 'none', borderBottom: '1px solid rgba(139,132,255,0.3)' }}>Privacy Policy</a>.
           </div>
 
-          {/* Token callout – replaces old "5 conversions/day" copy */}
+          {/* Token callout */}
           <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(0,212,170,0.06)', border: '1px solid rgba(0,212,170,0.2)', borderRadius: 'var(--radius-md)' }}>
             <div style={{ fontSize: '13px', color: 'var(--accent2)', fontWeight: 500, marginBottom: '4px' }}>✨ Free tokens on signup</div>
             <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>

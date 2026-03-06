@@ -124,3 +124,18 @@ body {
   background: var(--accent-glow);
   color: var(--text-primary);
 }
+
+/* ── Root reset — override Vite's default app.css ──────────────── */
+#root {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+/* ── Mobile viewport safety ─────────────────────────────────────── */
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+}
