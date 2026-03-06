@@ -18,7 +18,8 @@ const DASH_CSS = `
   @media (max-width: 900px) {
     .dash-stats   { grid-template-columns: repeat(2, 1fr); }
     .dash-bottom  { grid-template-columns: 1fr; }
-    .dash-sidebar-card { display: none; }
+    /* Remove the line that hides the sidebar card */
+    /* .dash-sidebar-card { display: none; } */
   }
   @media (max-width: 560px) {
     .dash-root    { padding: 20px 16px !important; }
@@ -26,7 +27,7 @@ const DASH_CSS = `
     .dash-actions { grid-template-columns: 1fr; }
     .dash-bottom  { grid-template-columns: 1fr; }
   }
-`
+`;
 
 export default function DashboardPage() {
   const { user, refreshUser } = useStore()

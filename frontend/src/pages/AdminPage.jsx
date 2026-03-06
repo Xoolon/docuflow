@@ -11,6 +11,38 @@ import {
   Server, Activity, Package, Shield
 } from 'lucide-react'
 
+const ADMIN_CSS = `
+  .admin-root { padding: 32px; max-width: 1400px; margin: 0 auto; }
+  .admin-header { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; flex-wrap: wrap; }
+  .admin-header h1 { font-family: var(--font-display); font-size: 28px; font-weight: 800; margin: 0; }
+  .admin-header p { color: var(--text-muted); margin: 0; font-size: 14px; }
+  .admin-refresh-btn { margin-left: auto; padding: 8px 16px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer; font-size: 13px; }
+  .admin-tabs { display: flex; gap: 4px; margin-bottom: 28px; background: var(--bg-elevated); padding: 4px; border-radius: var(--radius-md); width: fit-content; flex-wrap: wrap; }
+  .admin-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .admin-financial-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+  .admin-cost-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .admin-fixed-costs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .admin-table { overflow-x: auto; }
+
+  @media (max-width: 900px) {
+    .admin-root { padding: 20px; }
+    .admin-header { flex-direction: column; align-items: flex-start; }
+    .admin-refresh-btn { margin-left: 0; }
+    .admin-tabs { width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+    .admin-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .admin-financial-grid { grid-template-columns: 1fr; }
+    .admin-cost-grid { grid-template-columns: repeat(2, 1fr); }
+    .admin-fixed-costs { grid-template-columns: repeat(2, 1fr); }
+    .admin-header h1 { font-size: 24px; }
+  }
+  @media (max-width: 560px) {
+    .admin-kpi-grid { grid-template-columns: 1fr; }
+    .admin-cost-grid { grid-template-columns: 1fr; }
+    .admin-fixed-costs { grid-template-columns: 1fr; }
+    .admin-root { padding: 16px; }
+  }
+`;
+
 const fmt = (n) => n?.toLocaleString() ?? '—'
 const usd = (n) => `$${(n ?? 0).toFixed(2)}`
 
@@ -24,6 +56,16 @@ export default function AdminPage() {
   const [users,    setUsers]      = useState([])
   const [loading,  setLoading]    = useState(true)
   const [tab,      setTab]        = useState('overview')
+
+  // Inject CSS
+  useEffect(() => {
+    if (!document.getElementById('df-admin-css')) {
+      const el = document.createElement('style')
+      el.id = 'df-admin-css'
+      el.textContent = ADMIN_CSS
+      document.head.appendChild(el)
+    }
+  }, [])
 
   useEffect(() => {
     if (!user?.is_admin) { navigate('/dashboard'); return }
@@ -76,25 +118,21 @@ export default function AdminPage() {
   const ov = overview
 
   return (
-    <div style={{ padding: '32px', maxWidth: '1400px', margin: '0 auto' }}>
+    <div className="admin-root">
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px' }}>
+      <div className="admin-header">
         <Shield size={28} color={ACCENT} />
         <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 800, margin: 0 }}>
-            Admin Dashboard
-          </h1>
-          <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '14px' }}>
-            DocuFlow business intelligence — real-time
-          </p>
+          <h1>Admin Dashboard</h1>
+          <p>DocuFlow business intelligence — real-time</p>
         </div>
-        <button onClick={loadAll} style={{ marginLeft: 'auto', padding: '8px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '13px' }}>
+        <button className="admin-refresh-btn" onClick={loadAll}>
           ↻ Refresh
         </button>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '28px', background: 'var(--bg-elevated)', padding: '4px', borderRadius: 'var(--radius-md)', width: 'fit-content' }}>
+      <div className="admin-tabs">
         {['overview', 'revenue', 'api costs', 'users'].map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '7px 18px', borderRadius: 'var(--radius-sm)', border: 'none',
@@ -109,7 +147,7 @@ export default function AdminPage() {
       {tab === 'overview' && ov && (
         <>
           {/* KPI grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '28px' }}>
+          <div className="admin-kpi-grid">
             {[
               { label: 'Total Users',    value: fmt(ov.users.total),           sub: `${ov.users.paying} paying`,           icon: Users,      color: ACCENT  },
               { label: 'Total Revenue',  value: usd(ov.revenue.total_usd),     sub: `₦${fmt(ov.revenue.total_ngn)}`,       icon: DollarSign, color: ACCENT2 },
@@ -132,7 +170,7 @@ export default function AdminPage() {
           </div>
 
           {/* Financial breakdown */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '28px' }}>
+          <div className="admin-financial-grid">
             <div style={card}>
               <h3 style={{ margin: '0 0 20px', fontFamily: 'var(--font-display)', fontSize: '16px' }}>Revenue vs API Cost (30d)</h3>
               <ResponsiveContainer width="100%" height={220}>
@@ -166,7 +204,7 @@ export default function AdminPage() {
           {/* Fixed cost breakdown */}
           <div style={card}>
             <h3 style={{ margin: '0 0 16px', fontFamily: 'var(--font-display)', fontSize: '16px' }}>Monthly Cost Structure</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+            <div className="admin-fixed-costs">
               {[
                 { label: 'Railway Hosting', value: '$12.00', note: 'incl. DB + Redis' },
                 { label: 'Domain/SSL',      value: '$0.83',  note: '$10/yr' },
@@ -202,7 +240,7 @@ export default function AdminPage() {
 
           <div style={card}>
             <h3 style={{ margin: '0 0 16px', fontFamily: 'var(--font-display)', fontSize: '16px' }}>Pack Performance</h3>
-            <div style={{ overflowX: 'auto' }}>
+            <div className="admin-table">
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                 <thead>
                   <tr>
@@ -254,7 +292,7 @@ export default function AdminPage() {
             </ResponsiveContainer>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+          <div className="admin-cost-grid">
             {[
               { label: 'Total API Spend',     value: usd(ov?.revenue.api_cost_usd),         color: RED    },
               { label: 'Free Tier API Spend', value: usd(ov?.revenue.free_tier_api_cost_usd), color: '#f59e0b' },
@@ -273,7 +311,7 @@ export default function AdminPage() {
       {tab === 'users' && (
         <div style={card}>
           <h3 style={{ margin: '0 0 16px', fontFamily: 'var(--font-display)', fontSize: '16px' }}>All Users</h3>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="admin-table">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
                 <tr>
