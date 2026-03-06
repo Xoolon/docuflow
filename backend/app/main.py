@@ -117,3 +117,17 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "env": settings.app_env}
+
+
+# ── UptimeRobot / load-balancer HEAD support ───────────────────────────────────
+# Monitors send HEAD /health — FastAPI only registers GET by default.
+# This explicit HEAD handler returns 200 with no body (correct for HEAD).
+from fastapi import Response as FastAPIResponse
+
+@app.head("/health")
+async def health_head():
+    return FastAPIResponse(status_code=200)
+
+@app.head("/")
+async def root_head():
+    return FastAPIResponse(status_code=200)

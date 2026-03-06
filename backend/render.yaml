@@ -2,23 +2,27 @@ services:
   - type: web
     name: docuflow-api
     runtime: python
-    region: oregon
+    region: frankfurt      # matches EU database + Vercel EU region
     plan: starter
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT --timeout 120 --log-level info
+    startCommand: >
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      -w 1
+      --bind 0.0.0.0:$PORT
+      --timeout 120
+      --keep-alive 5
+      --log-level info
+      --access-logfile -
     healthCheckPath: /health
     autoDeploy: true
 
     envVars:
-      # ── Python version — THIS is what Render actually reads ──────────────
       - key: PYTHON_VERSION
         value: "3.11.9"
-
       - key: APP_ENV
         value: production
-
-      # ── Set all of these in Render dashboard → Environment ───────────────
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL

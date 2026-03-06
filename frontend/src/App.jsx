@@ -9,14 +9,33 @@ import AIPage from './pages/AIPage'
 import HistoryPage from './pages/HistoryPage'
 import PaymentVerifyPage from './pages/PaymentVerifyPage'
 import BuyTokensPage from './pages/BuyTokensPage'
+import AdminPage from './pages/AdminPage'
 import TermsPage from './pages/TermsPage'
 import PrivacyPage from './pages/PrivacyPage'
-import AdminPage from './pages/AdminPage'
 import UpgradeModal from './components/UpgradeModal'
+
+// ── Route guards ──────────────────────────────────────────────────────────────
 
 function ProtectedRoute({ children }) {
   const token = useStore(s => s.token)
+  // Token is already validated (expiry checked) when loaded from localStorage.
+  // If null here it means no session or it expired → redirect to login.
   if (!token) return <Navigate to="/login" replace />
+  return children
+}
+
+function AdminRoute({ children }) {
+  const token = useStore(s => s.token)
+  const user  = useStore(s => s.user)
+  if (!token) return <Navigate to="/login" replace />
+  if (!user?.is_admin) return <Navigate to="/dashboard" replace />
+  return children
+}
+
+// Redirect already-logged-in users away from /login
+function PublicOnlyRoute({ children }) {
+  const token = useStore(s => s.token)
+  if (token) return <Navigate to="/dashboard" replace />
   return children
 }
 
@@ -41,21 +60,31 @@ export default function App() {
           error:   { iconTheme: { primary: '#ff6b6b', secondary: '#0a0a0f' } },
         }}
       />
+
       {showUpgradeModal && <UpgradeModal onClose={() => setShowUpgradeModal(false)} />}
+
       <Routes>
-        <Route path="/login"          element={<LoginPage />} />
+        {/* ── Public routes ─────────────────────────────────────── */}
+        <Route path="/login"   element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+        <Route path="/terms"   element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+
+        {/* Payment verify — accessible without being inside layout */}
         <Route path="/payment/verify" element={<PaymentVerifyPage />} />
-           <Route path="/terms"          element={<TermsPage />} />
-        <Route path="/privacy"        element={<PrivacyPage />} />
+
+        {/* ── Protected app routes ──────────────────────────────── */}
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard"  element={<DashboardPage />} />
-          <Route path="convert"    element={<ConvertPage />} />
-          <Route path="ai"         element={<AIPage />} />
-          <Route path="history"    element={<HistoryPage />} />
-          <Route path="buy-tokens" element={<BuyTokensPage />} />
-          <Route path="admin"      element={<AdminPage />} />
+          <Route index                  element={<Navigate to="/dashboard" replace />} />
+          <Route path="dashboard"       element={<DashboardPage />} />
+          <Route path="convert"         element={<ConvertPage />} />
+          <Route path="ai"              element={<AIPage />} />
+          <Route path="history"         element={<HistoryPage />} />
+          <Route path="buy-tokens"      element={<BuyTokensPage />} />
+          {/* Admin — extra guard so non-admins get redirected not 404 */}
+          <Route path="admin"           element={<AdminRoute><AdminPage /></AdminRoute>} />
         </Route>
+
+        {/* Catch-all → dashboard (logged in) or login (not logged in) */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
