@@ -5,17 +5,20 @@ services:
     region: oregon
     plan: starter
     rootDir: backend
-    pythonVersion: "3.11.9"
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT --timeout 120
+    startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT --timeout 120 --log-level info
     healthCheckPath: /health
     autoDeploy: true
 
     envVars:
-      - key: APP_ENV
-        value: production
+      # ── Python version — THIS is what Render actually reads ──────────────
       - key: PYTHON_VERSION
         value: "3.11.9"
+
+      - key: APP_ENV
+        value: production
+
+      # ── Set all of these in Render dashboard → Environment ───────────────
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL

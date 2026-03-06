@@ -1,39 +1,55 @@
+"""
+Database engine — deferred creation with startup validation.
+Fails loudly on misconfiguration so Render logs show the real error.
+"""
+import sys
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.pool import NullPool   # ← Import NullPool
 
 from app.config import settings
 
-# ─── Engine setup ─────────────────────────────────────────────────────────────
+
+def _validate_database_url(url: str) -> None:
+    """Crash with a useful message if the DB URL is obviously wrong."""
+    if not url:
+        print("FATAL: DATABASE_URL is not set. Add it in Render → Environment.", file=sys.stderr)
+        sys.exit(1)
+    if url == "sqlite:///./docuflow.db" and settings.app_env == "production":
+        print(
+            "FATAL: DATABASE_URL is still the SQLite default but APP_ENV=production. "
+            "Set DATABASE_URL to your Supabase PostgreSQL connection string in Render → Environment.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+_validate_database_url(settings.database_url)
+
+# ─── Engine ───────────────────────────────────────────────────────────────────
 _is_sqlite = settings.database_url.startswith("sqlite")
-_is_supabase_pooler = "pooler.supabase.com" in settings.database_url  # detect Supabase
 
 if _is_sqlite:
-    # SQLite: no connection pool settings (uses StaticPool)
     engine = create_engine(
         settings.database_url,
         connect_args={"check_same_thread": False},
         pool_pre_ping=True,
     )
 else:
-    # PostgreSQL
-    if _is_supabase_pooler:
-        # Use NullPool for Supabase transaction pooler (pooling is handled by Supavisor)
-        engine = create_engine(
-            settings.database_url,
-            poolclass=NullPool,
-            pool_pre_ping=True,
-        )
-    else:
-        # Normal connection pool for other PostgreSQL (e.g., local development)
-        engine = create_engine(
-            settings.database_url,
-            pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
-        )
+    # PostgreSQL — Supabase transaction pooler uses pgbouncer, needs
+    # pool_pre_ping and reasonable pool size.  No statement_timeout here
+    # because pgbouncer handles that server-side.
+    engine = create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=5,        # starter plan has limited connections
+        max_overflow=10,
+        connect_args={
+            # Required for Supabase pgbouncer (transaction pooler)
+            "sslmode": "require",
+            "connect_timeout": 10,
+        },
+    )
 
-# Enable WAL mode for SQLite — much better concurrent read performance
 if _is_sqlite:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragmas(dbapi_conn, _):
@@ -45,11 +61,11 @@ if _is_sqlite:
 
 # ─── Session ──────────────────────────────────────────────────────────────────
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
+
 def get_db():
-    """FastAPI dependency: yields a database session per request."""
+    """FastAPI dependency — yields a DB session per request."""
     db = SessionLocal()
     try:
         yield db
