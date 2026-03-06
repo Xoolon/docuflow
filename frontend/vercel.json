@@ -1,10 +1,6 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite",
-  "rewrites": [
-    { "source": "/((?!sitemap\\.xml|robots\\.txt|site\\.webmanifest|favicon.*|assets/.*).*)", "destination": "/index.html" }
-  ],
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -22,5 +18,8 @@
         { "key": "Permissions-Policy",     "value": "camera=(), microphone=(), geolocation=()" }
       ]
     }
+  ],
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
