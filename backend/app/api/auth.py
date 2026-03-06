@@ -106,3 +106,39 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @router.post("/logout")
 async def logout(current_user: User = Depends(get_current_user)):
     return {"message": "Logged out successfully"}
+
+
+@router.post("/bootstrap-admin")
+async def bootstrap_admin(
+    email:  str,
+    secret: str,
+    db:     Session = Depends(get_db),
+):
+    """
+    One-time endpoint to grant admin to the first user.
+    Protected by SECRET_KEY — unusable without it.
+    Call:  POST /api/v1/auth/bootstrap-admin?email=you@example.com&secret=YOUR_SECRET_KEY
+    Safe to leave deployed — wrong secret = 403.
+    """
+    # Must match the SECRET_KEY env var exactly
+    if secret != settings.secret_key:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        # List all emails so caller knows what exists
+        all_emails = [u.email for u in db.query(User.email).all()]
+        raise HTTPException(
+            status_code=404,
+            detail=f"No user with email '{email}'. Registered: {all_emails}",
+        )
+
+    user.is_admin = True
+    db.commit()
+    return {
+        "ok":       True,
+        "email":    user.email,
+        "name":     user.name,
+        "is_admin": user.is_admin,
+        "message":  f"Admin granted to {user.email}. Log out and back in to activate.",
+    }
