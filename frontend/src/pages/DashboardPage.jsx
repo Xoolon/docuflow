@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import api from '../utils/api'
+import AdBanner from '../components/AdBanner'
 import {
   ArrowLeftRight, Sparkles, Zap, ArrowRight,
   CheckCircle2, Crown, ShoppingCart,
@@ -18,8 +19,7 @@ const DASH_CSS = `
   @media (max-width: 900px) {
     .dash-stats   { grid-template-columns: repeat(2, 1fr); }
     .dash-bottom  { grid-template-columns: 1fr; }
-    /* Remove the line that hides the sidebar card */
-    /* .dash-sidebar-card { display: none; } */
+    .dash-sidebar-card { display: none; }
   }
   @media (max-width: 560px) {
     .dash-root    { padding: 20px 16px !important; }
@@ -27,7 +27,7 @@ const DASH_CSS = `
     .dash-actions { grid-template-columns: 1fr; }
     .dash-bottom  { grid-template-columns: 1fr; }
   }
-`;
+`
 
 export default function DashboardPage() {
   const { user, refreshUser } = useStore()
@@ -71,6 +71,9 @@ export default function DashboardPage() {
 
   return (
     <div className="dash-root" style={{ padding: '32px 28px', animation: 'fadeUp 0.4s ease' }}>
+
+      {/* Ad — dashboard top, ultra minimal */}
+      <AdBanner variant="dashboard-top" isPaid={isPaying} />
 
       {/* Header */}
       <div style={{ marginBottom: '28px' }}>
@@ -185,6 +188,9 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Ad — dashboard bottom */}
+      <AdBanner variant="dashboard-bottom" isPaid={isPaying} />
     </div>
   )
 }

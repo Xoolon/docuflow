@@ -3,9 +3,11 @@ import { useDropzone } from 'react-dropzone'
 import { useStore } from '../store/useStore'
 import api from '../utils/api'
 import toast from 'react-hot-toast'
+import AdBanner from '../components/AdBanner'
+import LoginPromptModal from '../components/LoginPromptModal'
 import {
-  Upload, ArrowRight, Download, X, FileText,
-  Image, AlertCircle, Lock, Sparkles, RefreshCw, ShoppingCart,
+  Upload, ArrowRight, Download, X,
+  AlertCircle, Lock, RefreshCw, ShoppingCart,
 } from 'lucide-react'
 
 const CONVERT_CSS = `
@@ -37,17 +39,20 @@ const FORMAT_ICONS = {
 
 export default function ConvertPage() {
   const { user, refreshUser, deductTokensOptimistic, setShowUpgradeModal } = useStore()
-  const [file,         setFile]         = useState(null)
-  const [targetFormat, setTargetFormat] = useState('')
-  const [converting,   setConverting]   = useState(false)
-  const [result,       setResult]       = useState(null)
-  const [error,        setError]        = useState(null)
+  const [file,          setFile]          = useState(null)
+  const [targetFormat,  setTargetFormat]  = useState('')
+  const [converting,    setConverting]    = useState(false)
+  const [result,        setResult]        = useState(null)
+  const [error,         setError]         = useState(null)
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false)
 
+  // Guest = no token. They can still use the UI up to the Convert button.
+  const isGuest   = !user
   const balance   = user?.tokens_balance   ?? 0
   const isPaid    = (user?.tokens_purchased ?? 0) > 0
   const isImage   = file ? ['jpg','jpeg','png','webp','heic','svg','gif'].includes(file.name.split('.').pop().toLowerCase()) : false
   const tokenCost = isImage ? 200 : 500
-  const canAfford = balance >= tokenCost
+  const canAfford = isGuest ? true : balance >= tokenCost  // guests see no balance warning
   const inputExt  = file ? file.name.split('.').pop().toLowerCase() : null
   const availableFormats = inputExt ? (CONVERSION_MAP[inputExt] || []) : []
 
@@ -65,13 +70,20 @@ export default function ConvertPage() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, maxFiles: 1, maxSize: 25 * 1024 * 1024,
     onDropRejected: (r) => {
-      if (r[0]?.errors[0]?.code === 'file-too-large') toast.error('File too large. Maximum 25 MB.')
+      if (r[0]?.errors[0]?.code === 'file-too-large') toast.error('File too large. Max 25 MB.')
       else toast.error('File type not supported.')
     }
   })
 
   const handleConvert = async () => {
     if (!file || !targetFormat) return
+
+    // Gate guests at the convert button — show signup prompt
+    if (isGuest) {
+      setShowLoginPrompt(true)
+      return
+    }
+
     if (!canAfford) { setShowUpgradeModal(true); return }
     setConverting(true); setResult(null); setError(null)
     deductTokensOptimistic(tokenCost)
@@ -92,19 +104,19 @@ export default function ConvertPage() {
       const status = err.response?.status
       let errMsg = 'Conversion failed. Please try again.'
       if (status === 402) {
-        errMsg = `Not enough tokens. This conversion needs ${tokenCost.toLocaleString()} tokens but you only have ${balance.toLocaleString()}.`
+        errMsg = `Not enough tokens. This conversion costs ${tokenCost.toLocaleString()} tokens.`
         setShowUpgradeModal(true)
       } else if (status === 400) {
-        errMsg = err.response?.data?.detail || 'This conversion format is not supported.'
+        errMsg = err.response?.data?.detail || 'Format not supported.'
       } else if (status === 413) {
-        errMsg = 'File too large. Maximum file size is 25 MB.'
+        errMsg = 'File too large. Max 25 MB.'
       } else if (!err.response) {
         errMsg = 'Cannot reach server. Check your connection.'
       } else if (typeof err.response?.data?.detail === 'string') {
         errMsg = err.response.data.detail
       }
       setError(errMsg)
-      toast.error(errMsg.length > 60 ? 'Conversion failed — see details below.' : errMsg)
+      if (errMsg.length <= 60) toast.error(errMsg)
     } finally { setConverting(false) }
   }
 
@@ -121,6 +133,12 @@ export default function ConvertPage() {
 
   return (
     <div className="conv-root">
+      {showLoginPrompt && (
+        <LoginPromptModal
+          filename={file?.name}
+          onClose={() => setShowLoginPrompt(false)}
+        />
+      )}
 
       {/* Header */}
       <div className="conv-header">
@@ -129,12 +147,14 @@ export default function ConvertPage() {
             File Converter
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-            Convert documents & images between formats instantly
+            Convert documents & images between formats — free to try
           </p>
         </div>
-        <div className="conv-badge" style={{ padding: '8px 14px', background: canAfford ? 'rgba(0,212,170,0.1)' : 'rgba(255,107,107,0.1)', border: `1px solid ${canAfford ? 'rgba(0,212,170,0.3)' : 'rgba(255,107,107,0.3)'}`, borderRadius: 'var(--radius-sm)', fontSize: '13px', color: canAfford ? '#00d4aa' : '#ff6b6b', fontWeight: 500, whiteSpace: 'nowrap' }}>
-          {balance.toLocaleString()} tokens
-        </div>
+        {!isGuest && (
+          <div className="conv-badge" style={{ padding: '8px 14px', background: canAfford ? 'rgba(0,212,170,0.1)' : 'rgba(255,107,107,0.1)', border: `1px solid ${canAfford ? 'rgba(0,212,170,0.3)' : 'rgba(255,107,107,0.3)'}`, borderRadius: 'var(--radius-sm)', fontSize: '13px', color: canAfford ? '#00d4aa' : '#ff6b6b', fontWeight: 500, whiteSpace: 'nowrap' }}>
+            {balance.toLocaleString()} tokens
+          </div>
+        )}
       </div>
 
       {/* Drop zone or file panel */}
@@ -147,18 +167,20 @@ export default function ConvertPage() {
           <div style={{ fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 600, marginBottom: '8px' }}>
             {isDragActive ? 'Drop to upload' : 'Drop your file here'}
           </div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '16px' }}>
-            or click to browse · max 25 MB
-          </div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '16px' }}>or click to browse · max 25 MB</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '6px' }}>
             {['PDF','DOCX','TXT','HTML','MD','JPG','PNG','WEBP','SVG','CSV','XLSX'].map(f => (
               <span key={f} style={{ padding: '3px 10px', background: 'var(--bg-elevated)', borderRadius: '100px', fontSize: '12px', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>{f}</span>
             ))}
           </div>
+          {isGuest && (
+            <div style={{ marginTop: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
+              No account needed to upload — sign in only to convert
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
           {/* File info */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius-lg)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
             <div style={{ width: '44px', height: '44px', background: 'rgba(108,99,255,0.1)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0 }}>
@@ -177,9 +199,8 @@ export default function ConvertPage() {
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '20px' }}>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Convert to</div>
             {availableFormats.length === 0 ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 16px', background: 'rgba(255,107,107,0.06)', border: '1px solid rgba(255,107,107,0.2)', borderRadius: 'var(--radius-md)', color: '#ff9f43', fontSize: '14px' }}>
-                <AlertCircle size={15} />
-                No output formats available for .{inputExt} files. Try uploading a different file type.
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 16px', background: 'rgba(255,159,67,0.06)', border: '1px solid rgba(255,159,67,0.2)', borderRadius: 'var(--radius-md)', color: '#ff9f43', fontSize: '14px' }}>
+                <AlertCircle size={15} /> No conversions available for .{inputExt}
               </div>
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -193,33 +214,41 @@ export default function ConvertPage() {
             )}
           </div>
 
-          {/* Watermark notice */}
-          {!isPaid && (
+          {/* Watermark notice (logged-in free users only) */}
+          {!isGuest && !isPaid && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 16px', background: 'rgba(255,159,67,0.06)', border: '1px solid rgba(255,159,67,0.2)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: '#ff9f43' }}>
               <Lock size={14} style={{ flexShrink: 0, marginTop: '1px' }} />
-              <span>Free tier: Output will include a DocuFlow watermark.{' '}
+              <span>Free tier: output will include a watermark.{' '}
                 <button onClick={() => setShowUpgradeModal(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-light)', fontFamily: 'var(--font-body)', fontSize: '13px', textDecoration: 'underline', padding: 0 }}>
-                  Upgrade to remove →
+                  Remove →
                 </button>
               </span>
             </div>
           )}
 
+          {/* Guest CTA hint */}
+          {isGuest && targetFormat && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: 'rgba(108,99,255,0.06)', border: '1px solid rgba(108,99,255,0.2)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: 'var(--accent-light)' }}>
+              <span style={{ fontSize: '16px' }}>🎉</span>
+              Free account gets 10,000 tokens — enough for 20 conversions.
+            </div>
+          )}
+
           {/* Insufficient token warning */}
-          {!canAfford && (
+          {!isGuest && !canAfford && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '14px 16px', background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: '#ff6b6b' }}>
               <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '1px' }} />
               <div>
-                <div style={{ fontWeight: 600, marginBottom: '4px' }}>Not enough tokens</div>
+                <div style={{ fontWeight: 600, marginBottom: '3px' }}>Not enough tokens</div>
                 <div style={{ lineHeight: 1.5 }}>
-                  This conversion costs <strong>{tokenCost.toLocaleString()} tokens</strong> but you only have <strong>{balance.toLocaleString()}</strong>.{' '}
-                  <a href="/buy-tokens" style={{ color: '#ff6b6b', fontWeight: 600 }}>Buy more tokens →</a>
+                  Needs <strong>{tokenCost.toLocaleString()}</strong> · you have <strong>{balance.toLocaleString()}</strong>.{' '}
+                  <a href="/buy-tokens" style={{ color: '#ff6b6b', fontWeight: 600 }}>Buy more →</a>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Conversion error */}
+          {/* Error */}
           {error && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '14px 16px', background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: '#ff6b6b' }}>
               <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '1px' }} />
@@ -227,44 +256,51 @@ export default function ConvertPage() {
                 <div style={{ fontWeight: 600, marginBottom: '3px' }}>Conversion failed</div>
                 <div style={{ lineHeight: 1.5, color: '#ffaaaa' }}>{error}</div>
               </div>
-              <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', padding: '0 2px', flexShrink: 0 }}><X size={14} /></button>
+              <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', padding: 0, flexShrink: 0 }}><X size={14} /></button>
             </div>
           )}
 
           {/* Convert button */}
           <button onClick={handleConvert}
-            disabled={!targetFormat || converting || !canAfford || availableFormats.length === 0}
-            style={{ padding: '14px 32px', background: (!targetFormat || converting || !canAfford) ? 'var(--bg-elevated)' : 'linear-gradient(135deg, var(--accent), #8b84ff)', border: 'none', borderRadius: 'var(--radius-md)', color: (!targetFormat || converting || !canAfford) ? 'var(--text-muted)' : 'white', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '15px', cursor: (!targetFormat || converting || !canAfford) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', transition: 'var(--transition)', boxShadow: (targetFormat && !converting && canAfford) ? 'var(--shadow-accent)' : 'none' }}>
+            disabled={!targetFormat || converting || availableFormats.length === 0 || (!isGuest && !canAfford)}
+            style={{ padding: '14px 32px', background: (!targetFormat || converting || (!isGuest && !canAfford)) ? 'var(--bg-elevated)' : 'linear-gradient(135deg, var(--accent), #8b84ff)', border: 'none', borderRadius: 'var(--radius-md)', color: (!targetFormat || converting || (!isGuest && !canAfford)) ? 'var(--text-muted)' : 'white', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '15px', cursor: (!targetFormat || converting) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', transition: 'var(--transition)', boxShadow: (targetFormat && !converting && (isGuest || canAfford)) ? 'var(--shadow-accent)' : 'none' }}>
             {converting
               ? <><div className="spinner" /> Converting…</>
-              : <><ArrowRight size={17} /> Convert {inputExt ? `.${inputExt.toUpperCase()}` : ''}{targetFormat ? ` → .${targetFormat.toUpperCase()}` : ''}</>
+              : isGuest
+                ? <><ArrowRight size={17} /> Convert {inputExt ? `.${inputExt.toUpperCase()}` : ''}{targetFormat ? ` → .${targetFormat.toUpperCase()}` : ''} — free</>
+                : <><ArrowRight size={17} /> Convert {inputExt ? `.${inputExt.toUpperCase()}` : ''}{targetFormat ? ` → .${targetFormat.toUpperCase()}` : ''}</>
             }
           </button>
 
           {/* Result */}
           {result && (
-            <div style={{ background: 'rgba(0,212,170,0.06)', border: '1px solid rgba(0,212,170,0.25)', borderRadius: 'var(--radius-lg)', padding: '16px 20px', animation: 'fadeUp 0.3s ease' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                <div>
-                  <div style={{ fontWeight: 500, color: '#00d4aa', marginBottom: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    ✓ Ready to download
+            <>
+              <div style={{ background: 'rgba(0,212,170,0.06)', border: '1px solid rgba(0,212,170,0.25)', borderRadius: 'var(--radius-lg)', padding: '16px 20px', animation: 'fadeUp 0.3s ease' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                  <div>
+                    <div style={{ fontWeight: 500, color: '#00d4aa', marginBottom: '3px' }}>✓ Ready to download</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {result.filename} · {(result.size/1024).toFixed(1)} KB
+                      {result.watermarked && ' · Watermarked (free tier)'}
+                      {result.tokensCharged && ` · ${result.tokensCharged.toLocaleString()} tokens used`}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    {result.filename} · {(result.size/1024).toFixed(1)} KB
-                    {result.watermarked && ' · Watermarked'}
-                    {result.tokensCharged && ` · ${result.tokensCharged.toLocaleString()} tokens used`}
+                  <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                    <button onClick={handleReset} style={{ padding: '8px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '13px', fontFamily: 'var(--font-body)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <RefreshCw size={12} /> New
+                    </button>
+                    <button onClick={handleDownload} style={{ padding: '8px 18px', background: '#00d4aa', border: 'none', borderRadius: 'var(--radius-sm)', color: 'white', cursor: 'pointer', fontSize: '13px', fontFamily: 'var(--font-display)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <Download size={13} /> Download
+                    </button>
                   </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                  <button onClick={handleReset} style={{ padding: '8px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '13px', fontFamily: 'var(--font-body)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <RefreshCw size={12} /> New
-                  </button>
-                  <button onClick={handleDownload} style={{ padding: '8px 18px', background: '#00d4aa', border: 'none', borderRadius: 'var(--radius-sm)', color: 'white', cursor: 'pointer', fontSize: '13px', fontFamily: 'var(--font-display)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <Download size={13} /> Download
-                  </button>
                 </div>
               </div>
-            </div>
+
+              {/* Ad banner — only for free logged-in users, shown after result */}
+              {!isGuest && (
+                <AdBanner variant="convert-result" isPaid={isPaid} />
+              )}
+            </>
           )}
         </div>
       )}

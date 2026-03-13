@@ -14,12 +14,10 @@ import TermsPage from './pages/TermsPage'
 import PrivacyPage from './pages/PrivacyPage'
 import UpgradeModal from './components/UpgradeModal'
 
-// ── Route guards ──────────────────────────────────────────────────────────────
+// ── Route guards ───────────────────────────────────────────────────────────────
 
 function ProtectedRoute({ children }) {
   const token = useStore(s => s.token)
-  // Token is already validated (expiry checked) when loaded from localStorage.
-  // If null here it means no session or it expired → redirect to login.
   if (!token) return <Navigate to="/login" replace />
   return children
 }
@@ -37,6 +35,12 @@ function PublicOnlyRoute({ children }) {
   const token = useStore(s => s.token)
   if (token) return <Navigate to="/dashboard" replace />
   return children
+}
+
+// Root redirect — guests go to /convert (public landing), authed users to /dashboard
+function RootRedirect() {
+  const token = useStore(s => s.token)
+  return <Navigate to={token ? '/dashboard' : '/convert'} replace />
 }
 
 export default function App() {
@@ -64,28 +68,34 @@ export default function App() {
       {showUpgradeModal && <UpgradeModal onClose={() => setShowUpgradeModal(false)} />}
 
       <Routes>
-        {/* ── Public routes ─────────────────────────────────────── */}
+        {/* ── Root: guests → /convert, authed → /dashboard ─────── */}
+        <Route path="/" element={<RootRedirect />} />
+
+        {/* ── Fully public routes (no layout) ──────────────────── */}
         <Route path="/login"   element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
         <Route path="/terms"   element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
-
-        {/* Payment verify — accessible without being inside layout */}
         <Route path="/payment/verify" element={<PaymentVerifyPage />} />
 
-        {/* ── Protected app routes ──────────────────────────────── */}
-        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index                  element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard"       element={<DashboardPage />} />
-          <Route path="convert"         element={<ConvertPage />} />
-          <Route path="ai"              element={<AIPage />} />
-          <Route path="history"         element={<HistoryPage />} />
-          <Route path="buy-tokens"      element={<BuyTokensPage />} />
-          {/* Admin — extra guard so non-admins get redirected not 404 */}
-          <Route path="admin"           element={<AdminRoute><AdminPage /></AdminRoute>} />
+        {/* ── Public app routes — inside Layout, no auth required ─ */}
+        {/* /convert is accessible to guests; login prompt fires on submit */}
+        <Route element={<Layout />}>
+          <Route path="/convert" element={<ConvertPage />} />
         </Route>
 
-        {/* Catch-all → dashboard (logged in) or login (not logged in) */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        {/* ── Protected app routes — require login ──────────────── */}
+        <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+          <Route path="/dashboard"  element={<DashboardPage />} />
+          <Route path="/ai"         element={<AIPage />} />
+          <Route path="/history"    element={<HistoryPage />} />
+          <Route path="/buy-tokens" element={<BuyTokensPage />} />
+          <Route element={<AdminRoute><AdminPage /></AdminRoute>}>
+            <Route path="/admin" element={<AdminPage />} />
+          </Route>
+        </Route>
+
+        {/* Catch-all — unknown paths go to root (which then redirects) */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )

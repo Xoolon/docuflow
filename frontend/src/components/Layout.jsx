@@ -89,6 +89,7 @@ const navItems = [
 export default function Layout() {
   const { user, logout, refreshUser } = useStore()
   const navigate = useNavigate()
+  const isGuest  = !user
   const isAdmin  = user?.is_admin
   const isPaying = (user?.tokens_purchased ?? 0) > 0
 
@@ -99,10 +100,11 @@ export default function Layout() {
       el.textContent = LAYOUT_CSS
       document.head.appendChild(el)
     }
-    refreshUser()
+    if (!isGuest) refreshUser()
   }, [])
 
   const handleLogout = () => { logout(); navigate('/login') }
+  const handleSignIn = () => { sessionStorage.setItem('login_redirect', '/convert'); navigate('/login') }
 
   return (
     <div className="df-shell">
@@ -152,37 +154,48 @@ export default function Layout() {
           )}
         </nav>
 
-        {/* Token meter — desktop only */}
-        <div className="df-sidebar-tokens" style={{ borderTop: '1px solid var(--border)' }}>
-          <TokenMeter />
-        </div>
-
-        {/* User / logout — desktop only */}
-        <div className="df-sidebar-user" style={{ padding: '16px', borderTop: '1px solid var(--border)', marginTop: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            {user?.avatar_url ? (
-              <img src={user.avatar_url} alt={user.name} style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-            ) : (
-              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), var(--accent2))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600, color: 'white' }}>
-                {user?.name?.[0] || user?.email?.[0] || '?'}
-              </div>
-            )}
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {user?.name || 'User'}
-              </div>
-              <div style={{ fontSize: '11px', color: isPaying ? 'var(--accent2)' : 'var(--text-muted)' }}>
-                {isPaying ? '✓ Paying user' : 'Free tier'}
-              </div>
-            </div>
+        {/* Token meter — authenticated desktop only */}
+        {!isGuest && (
+          <div className="df-sidebar-tokens" style={{ borderTop: '1px solid var(--border)' }}>
+            <TokenMeter />
           </div>
-          <button onClick={handleLogout}
-            style={{ width: '100%', padding: '8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', transition: 'var(--transition)' }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-bright)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)';   e.currentTarget.style.borderColor = 'var(--border)'        }}
-          >
-            <LogOut size={14} /> Sign out
-          </button>
+        )}
+
+        {/* User / logout OR guest sign-in — desktop only */}
+        <div className="df-sidebar-user" style={{ padding: '16px', borderTop: '1px solid var(--border)', marginTop: 'auto' }}>
+          {isGuest ? (
+            <button onClick={handleSignIn}
+              style={{ width: '100%', padding: '10px', background: 'linear-gradient(135deg, var(--accent), var(--accent2))', border: 'none', borderRadius: 'var(--radius-md)', color: 'white', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}>
+              Sign in — it's free
+            </button>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                {user?.avatar_url ? (
+                  <img src={user.avatar_url} alt={user.name} style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), var(--accent2))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600, color: 'white' }}>
+                    {user?.name?.[0] || user?.email?.[0] || '?'}
+                  </div>
+                )}
+                <div style={{ overflow: 'hidden' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user?.name || 'User'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: isPaying ? 'var(--accent2)' : 'var(--text-muted)' }}>
+                    {isPaying ? '✓ Paying user' : 'Free tier'}
+                  </div>
+                </div>
+              </div>
+              <button onClick={handleLogout}
+                style={{ width: '100%', padding: '8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', transition: 'var(--transition)' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-bright)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)';   e.currentTarget.style.borderColor = 'var(--border)'        }}
+              >
+                <LogOut size={14} /> Sign out
+              </button>
+            </>
+          )}
         </div>
       </aside>
 
@@ -198,14 +211,22 @@ export default function Layout() {
             <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '16px' }}>DocuFlow</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--accent2)', fontWeight: 500 }}>
-              <Zap size={11} style={{ display: 'inline', marginRight: '3px', verticalAlign: 'middle' }} />
-              {(user?.tokens_balance ?? 0).toLocaleString()}
-            </span>
-            <button onClick={handleLogout}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', fontFamily: 'var(--font-body)' }}>
-              <LogOut size={15} />
-            </button>
+            {isGuest ? (
+              <button onClick={handleSignIn} style={{ padding: '6px 14px', background: 'linear-gradient(135deg, var(--accent), var(--accent2))', border: 'none', borderRadius: 'var(--radius-sm)', color: 'white', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}>
+                Sign in
+              </button>
+            ) : (
+              <>
+                <span style={{ fontSize: '12px', color: 'var(--accent2)', fontWeight: 500 }}>
+                  <Zap size={11} style={{ display: 'inline', marginRight: '3px', verticalAlign: 'middle' }} />
+                  {(user?.tokens_balance ?? 0).toLocaleString()}
+                </span>
+                <button onClick={handleLogout}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', fontFamily: 'var(--font-body)' }}>
+                  <LogOut size={15} />
+                </button>
+              </>
+            )}
           </div>
         </div>
 

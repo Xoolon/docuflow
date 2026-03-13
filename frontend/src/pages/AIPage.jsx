@@ -5,7 +5,8 @@ import api from '../utils/api'
 import toast from 'react-hot-toast'
 import {
   Sparkles, Upload, Copy, Download,
-  AlertCircle, Zap, X, ShoppingCart,
+  AlertCircle, Zap, X, ShoppingCart, Clock,
+  WifiOff, ServerCrash,
 } from 'lucide-react'
 
 const AI_CSS = `
@@ -35,10 +36,109 @@ const TASKS = [
   { id: 'summarize',    label: '📋 Summarize',     desc: 'Concise key points'      },
   { id: 'reformat',     label: '✂️ Reformat',      desc: 'Clean structure'         },
 ]
+
 const DOC_TYPES = ['Resume/CV','Cover Letter','Business Email','Report','Proposal','Meeting Notes','Blog Post','Other']
 const ACCENT2   = '#00d4aa'
+const ACCENT    = '#6c63ff'
 const MIN_TOKENS = 100
 
+// ── Error renderer — each error type gets a distinct, clear message ───────────
+function ErrorCard({ error, onDismiss }) {
+  if (!error) return null
+
+  const configs = {
+    // Not enough of the user's DocuFlow tokens — point to buy-tokens
+    insufficient_docuflow_tokens: {
+      icon: <ShoppingCart size={16} color="#ff6b6b" style={{ flexShrink: 0, marginTop: '1px' }} />,
+      title: 'Not enough tokens',
+      body: (
+        <>
+          <p style={{ fontSize: '13px', color: '#ffaaaa', lineHeight: 1.5, margin: '4px 0 10px' }}>
+            This job needs at least <strong>{error.required?.toLocaleString() ?? '100'}</strong> tokens
+            but your balance is <strong>{error.balance?.toLocaleString() ?? '0'}</strong>.
+            Your 10,000 welcome tokens cover document conversions — AI jobs consume tokens from the same pool
+            but require a top-up when your balance runs low.
+          </p>
+          <a href="/buy-tokens" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '7px 14px', background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)', borderRadius: 'var(--radius-sm)', color: '#ff6b6b', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
+            <ShoppingCart size={13} /> Buy more tokens — from KSh 260
+          </a>
+        </>
+      ),
+    },
+
+    // Anthropic has no credits — this is an admin/system problem, not user's fault
+    ai_service_unavailable: {
+      icon: <ServerCrash size={16} color="#ff9f43" style={{ flexShrink: 0, marginTop: '1px' }} />,
+      title: 'AI service temporarily unavailable',
+      body: (
+        <p style={{ fontSize: '13px', color: '#ffd199', lineHeight: 1.5, margin: '4px 0 0' }}>
+          Our AI service is temporarily offline. This is not related to your account or token balance.
+          Please try again in a few minutes. If the problem persists, contact support.
+        </p>
+      ),
+      borderColor: 'rgba(255,159,67,0.3)',
+      bgColor: 'rgba(255,159,67,0.08)',
+    },
+
+    // Daily free generation limit hit
+    daily_limit_reached: {
+      icon: <Clock size={16} color="#a29bfe" style={{ flexShrink: 0, marginTop: '1px' }} />,
+      title: 'Daily free generation used',
+      body: (
+        <>
+          <p style={{ fontSize: '13px', color: '#c9c3ff', lineHeight: 1.5, margin: '4px 0 10px' }}>
+            Free accounts get 1 AI generation per day. Your daily allowance resets at midnight.
+            Buy tokens to unlock unlimited AI jobs — starting at KSh 260.
+          </p>
+          <a href="/buy-tokens" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '7px 14px', background: 'rgba(108,99,255,0.15)', border: '1px solid rgba(108,99,255,0.4)', borderRadius: 'var(--radius-sm)', color: 'var(--accent-light)', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
+            <ShoppingCart size={13} /> Unlock unlimited AI
+          </a>
+        </>
+      ),
+      borderColor: 'rgba(108,99,255,0.3)',
+      bgColor: 'rgba(108,99,255,0.08)',
+    },
+
+    // Network / connection error
+    network: {
+      icon: <WifiOff size={16} color="#ff6b6b" style={{ flexShrink: 0, marginTop: '1px' }} />,
+      title: 'Connection error',
+      body: <p style={{ fontSize: '13px', color: '#ffaaaa', lineHeight: 1.5, margin: '4px 0 0' }}>Cannot reach the server. Please check your internet connection and try again.</p>,
+    },
+
+    // Generic fallback
+    general: {
+      icon: <AlertCircle size={16} color="#ff6b6b" style={{ flexShrink: 0, marginTop: '1px' }} />,
+      title: 'Processing failed',
+      body: <p style={{ fontSize: '13px', color: '#ffaaaa', lineHeight: 1.5, margin: '4px 0 0' }}>{error.message || 'An unexpected error occurred. Please try again.'}</p>,
+    },
+  }
+
+  const cfg = configs[error.code] || configs.general
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: '12px',
+      padding: '14px 16px',
+      background: cfg.bgColor ?? 'rgba(255,107,107,0.08)',
+      border: `1px solid ${cfg.borderColor ?? 'rgba(255,107,107,0.3)'}`,
+      borderRadius: 'var(--radius-md)',
+    }}>
+      {cfg.icon}
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: '14px', fontWeight: 600, color: cfg.titleColor ?? '#ff6b6b', marginBottom: '2px' }}>
+          {cfg.title}
+        </div>
+        {cfg.body}
+      </div>
+      <button onClick={onDismiss} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.3)', padding: 0, flexShrink: 0 }}>
+        <X size={14} />
+      </button>
+    </div>
+  )
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
 export default function AIPage() {
   const { user, refreshUser, deductTokensOptimistic } = useStore()
   const [task,       setTask]       = useState('improve')
@@ -47,20 +147,22 @@ export default function AIPage() {
   const [formatSpec, setFormatSpec] = useState('')
   const [processing, setProcessing] = useState(false)
   const [result,     setResult]     = useState(null)
-  const [error,      setError]      = useState(null)
+  const [error,      setError]      = useState(null)   // { code, message, balance, required }
   const [extracting, setExtracting] = useState(false)
   const textareaRef = useRef(null)
 
-  const balance   = user?.tokens_balance ?? 0
-  const wordCount = textInput.trim().split(/\s+/).filter(Boolean).length
-  const estTokens = Math.ceil(wordCount * 3.9)
-  const canAfford = balance >= Math.max(MIN_TOKENS, estTokens)
-  const isLow     = balance < MIN_TOKENS
+  const balance    = user?.tokens_balance ?? 0
+  const isPaying   = (user?.tokens_purchased ?? 0) > 0
+  const wordCount  = textInput.trim().split(/\s+/).filter(Boolean).length
+  const estTokens  = Math.ceil(wordCount * 3.9)
+  const isLow      = balance < MIN_TOKENS
 
   useEffect(() => {
     if (!document.getElementById('df-ai-css')) {
-      const el = document.createElement('style'); el.id = 'df-ai-css'
-      el.textContent = AI_CSS; document.head.appendChild(el)
+      const el = document.createElement('style')
+      el.id = 'df-ai-css'
+      el.textContent = AI_CSS
+      document.head.appendChild(el)
     }
   }, [])
 
@@ -68,7 +170,8 @@ export default function AIPage() {
     onDrop: async (files) => {
       if (!files[0]) return
       setExtracting(true)
-      const fd = new FormData(); fd.append('file', files[0])
+      const fd = new FormData()
+      fd.append('file', files[0])
       try {
         const res = await api.post('/ai/extract-text', fd)
         setTextInput(res.data.text)
@@ -89,9 +192,18 @@ export default function AIPage() {
 
   const handleProcess = async () => {
     if (!textInput.trim()) { toast.error('Please enter some text first.'); return }
-    if (isLow) { setError({ type: 'tokens', balance, needed: MIN_TOKENS }); return }
-    setProcessing(true); setResult(null); setError(null)
+
+    // Client-side pre-check for DocuFlow tokens
+    if (isLow) {
+      setError({ code: 'insufficient_docuflow_tokens', balance, required: MIN_TOKENS })
+      return
+    }
+
+    setProcessing(true)
+    setResult(null)
+    setError(null)
     deductTokensOptimistic(estTokens)
+
     try {
       const res = await api.post('/ai/process', {
         task,
@@ -107,29 +219,57 @@ export default function AIPage() {
       }
     } catch (err) {
       await refreshUser()
+
       const status = err.response?.status
       const detail = err.response?.data?.detail
-      if (status === 402) {
-        const needed  = err.response?.data?.detail?.required ?? estTokens
-        const current = err.response?.data?.detail?.balance  ?? balance
-        setError({ type: 'tokens', balance: current, needed })
-      } else if (!err.response) {
-        setError({ type: 'network' })
-        toast.error('Cannot reach server. Check your connection.')
-      } else {
-        const msg = typeof detail === 'string' ? detail : detail?.message || 'AI processing failed. Please try again.'
-        setError({ type: 'general', message: msg })
-        toast.error(msg.length > 60 ? 'Processing failed — see details below.' : msg)
+
+      if (!err.response) {
+        setError({ code: 'network' })
+        return
       }
-    } finally { setProcessing(false) }
+
+      if (status === 402) {
+        // Insufficient DocuFlow tokens (our own check)
+        setError({
+          code:     'insufficient_docuflow_tokens',
+          balance:  detail?.balance  ?? balance,
+          required: detail?.required ?? estTokens,
+        })
+        return
+      }
+
+      if (status === 503) {
+        // Anthropic billing/auth failure — not user's fault
+        setError({ code: 'ai_service_unavailable' })
+        return
+      }
+
+      if (status === 429) {
+        // Daily free limit
+        setError({ code: 'daily_limit_reached' })
+        return
+      }
+
+      // Generic
+      const msg = typeof detail === 'string'
+        ? detail
+        : detail?.message || 'AI processing failed. Please try again.'
+      setError({ code: 'general', message: msg })
+    } finally {
+      setProcessing(false)
+    }
   }
 
-  const handleCopy     = () => { if (result?.result) { navigator.clipboard.writeText(result.result); toast.success('Copied!') } }
+  const handleCopy = () => {
+    if (result?.result) { navigator.clipboard.writeText(result.result); toast.success('Copied!') }
+  }
+
   const handleDownload = () => {
     if (!result?.result) return
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([result.result], { type: 'text/plain' }))
-    a.download = `docuflow_${task}.txt`; a.click()
+    a.download = `docuflow_${task}.txt`
+    a.click()
   }
 
   const selectedTask = TASKS.find(t => t.id === task)
@@ -147,8 +287,19 @@ export default function AIPage() {
             Generate, improve, and transform documents with AI
           </p>
         </div>
+
         {/* Token balance badge */}
-        <div style={{ padding: '8px 14px', background: isLow ? 'rgba(255,107,107,0.1)' : 'rgba(0,212,170,0.1)', border: `1px solid ${isLow ? 'rgba(255,107,107,0.3)' : 'rgba(0,212,170,0.3)'}`, borderRadius: 'var(--radius-sm)', fontSize: '13px', color: isLow ? '#ff6b6b' : ACCENT2, fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        <div style={{
+          padding: '8px 14px',
+          background: isLow ? 'rgba(255,107,107,0.1)' : 'rgba(0,212,170,0.1)',
+          border: `1px solid ${isLow ? 'rgba(255,107,107,0.3)' : 'rgba(0,212,170,0.3)'}`,
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '13px',
+          color: isLow ? '#ff6b6b' : ACCENT2,
+          fontWeight: 500,
+          display: 'flex', alignItems: 'center', gap: '6px',
+          whiteSpace: 'nowrap', flexShrink: 0,
+        }}>
           <Zap size={13} />
           {balance.toLocaleString()} tokens {isLow && '— Low!'}
         </div>
@@ -158,7 +309,9 @@ export default function AIPage() {
 
         {/* Task selector */}
         <div>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px', paddingLeft: '4px' }}>AI Mode</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px', paddingLeft: '4px' }}>
+            AI Mode
+          </div>
           <div className="ai-tasks" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {TASKS.map(t => (
               <button key={t.id} onClick={() => setTask(t.id)}
@@ -171,6 +324,17 @@ export default function AIPage() {
               </button>
             ))}
           </div>
+
+          {/* Free tier info */}
+          {!isPaying && (
+            <div style={{ marginTop: '20px', padding: '12px', background: 'rgba(108,99,255,0.06)', border: '1px solid rgba(108,99,255,0.15)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Free tier</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                1 AI job per day included.<br />
+                <a href="/buy-tokens" style={{ color: ACCENT2, textDecoration: 'none', fontWeight: 500 }}>Buy tokens →</a> for unlimited jobs.
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Input / Output panel */}
@@ -189,7 +353,8 @@ export default function AIPage() {
             <div>
               <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Format Requirements</label>
               <input type="text" placeholder="e.g. 2 pages, formal tone…" value={formatSpec} onChange={e => setFormatSpec(e.target.value)}
-                style={{ width: '100%', padding: '10px 12px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: '13px', outline: 'none' }} />
+                style={{ width: '100%', padding: '10px 12px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: '13px', outline: 'none' }}
+              />
             </div>
           </div>
 
@@ -208,55 +373,44 @@ export default function AIPage() {
                   </button>
                 </div>
                 {wordCount > 0 && (
-                  <span style={{ fontSize: '12px', color: canAfford ? 'var(--text-muted)' : '#ff6b6b' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                     ~{estTokens.toLocaleString()} tokens est.
                   </span>
                 )}
               </div>
             </div>
-            <textarea ref={textareaRef} value={textInput} onChange={e => { setTextInput(e.target.value); setError(null) }}
+            <textarea
+              ref={textareaRef}
+              value={textInput}
+              onChange={e => { setTextInput(e.target.value); setError(null) }}
               placeholder={task === 'generate'
                 ? 'Describe the document you want to create…\n\nE.g. "A formal resignation letter giving 2 weeks notice, professional and grateful tone."'
-                : 'Paste your text here, or upload a file above…'}
+                : 'Paste your text here, or upload a file above…'
+              }
               rows={10}
               style={{ width: '100%', padding: '14px 16px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: '14px', lineHeight: 1.7, resize: 'vertical', outline: 'none' }}
             />
           </div>
 
-          {/* Error states — inline, dismissable */}
-          {error && (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '14px 16px', background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: 'var(--radius-md)' }}>
-              <AlertCircle size={16} color="#ff6b6b" style={{ flexShrink: 0, marginTop: '1px' }} />
-              <div style={{ flex: 1 }}>
-                {error.type === 'tokens' && (
-                  <>
-                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#ff6b6b', marginBottom: '4px' }}>Not enough tokens</div>
-                    <div style={{ fontSize: '13px', color: '#ffaaaa', lineHeight: 1.5 }}>
-                      This job needs roughly <strong>{error.needed?.toLocaleString()}</strong> tokens but your balance is <strong>{error.balance?.toLocaleString()}</strong>.
-                    </div>
-                    <a href="/buy-tokens" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', marginTop: '10px', padding: '7px 14px', background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)', borderRadius: 'var(--radius-sm)', color: '#ff6b6b', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
-                      <ShoppingCart size={13} /> Buy more tokens
-                    </a>
-                  </>
-                )}
-                {error.type === 'network' && (
-                  <div style={{ fontSize: '13px', color: '#ffaaaa' }}>Cannot reach server. Please check your connection and try again.</div>
-                )}
-                {error.type === 'general' && (
-                  <>
-                    <div style={{ fontSize: '14px', fontWeight: 600, color: '#ff6b6b', marginBottom: '3px' }}>Processing failed</div>
-                    <div style={{ fontSize: '13px', color: '#ffaaaa', lineHeight: 1.5 }}>{error.message}</div>
-                  </>
-                )}
-              </div>
-              <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ff6b6b', padding: '0', flexShrink: 0 }}><X size={14} /></button>
-            </div>
-          )}
+          {/* Error card */}
+          <ErrorCard error={error} onDismiss={() => setError(null)} />
 
           {/* Submit */}
-          <button onClick={handleProcess}
-            disabled={!textInput.trim() || processing || isLow}
-            style={{ padding: '14px 32px', background: (!textInput.trim() || processing || isLow) ? 'var(--bg-elevated)' : 'linear-gradient(135deg, #8b5cf6, #00d4aa)', border: 'none', borderRadius: 'var(--radius-md)', color: (!textInput.trim() || processing || isLow) ? 'var(--text-muted)' : 'white', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '15px', cursor: (!textInput.trim() || processing || isLow) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', transition: 'var(--transition)', boxShadow: (textInput.trim() && !processing && !isLow) ? '0 0 32px rgba(139,92,246,0.3)' : 'none' }}>
+          <button
+            onClick={handleProcess}
+            disabled={!textInput.trim() || processing}
+            style={{
+              padding: '14px 32px',
+              background: (!textInput.trim() || processing) ? 'var(--bg-elevated)' : 'linear-gradient(135deg, #8b5cf6, #00d4aa)',
+              border: 'none', borderRadius: 'var(--radius-md)',
+              color: (!textInput.trim() || processing) ? 'var(--text-muted)' : 'white',
+              fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '15px',
+              cursor: (!textInput.trim() || processing) ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+              transition: 'var(--transition)',
+              boxShadow: (textInput.trim() && !processing) ? '0 0 32px rgba(139,92,246,0.3)' : 'none',
+            }}
+          >
             {processing
               ? <><div className="spinner" /> Processing with AI…</>
               : <><Sparkles size={17} /> {selectedTask?.label || 'Process'}</>
@@ -268,8 +422,8 @@ export default function AIPage() {
             <div style={{ background: 'var(--bg-card)', border: '1px solid rgba(0,212,170,0.25)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', animation: 'fadeUp 0.3s ease' }}>
               <div style={{ padding: '12px 16px', background: 'rgba(0,212,170,0.05)', borderBottom: '1px solid rgba(0,212,170,0.15)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                 <div style={{ fontSize: '13px', color: ACCENT2, fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  ✓ {result.task_display || selectedTask?.label} complete
-                  {result.tokens_used > 0 && <span style={{ color: 'var(--text-muted)' }}>· {result.tokens_used.toLocaleString()} tokens</span>}
+                  ✓ {result.task_display} complete
+                  {result.tokens_used > 0 && <span style={{ color: 'var(--text-muted)' }}>· {result.tokens_used.toLocaleString()} tokens · {result.model}</span>}
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button onClick={handleCopy} style={{ padding: '6px 12px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '12px', fontFamily: 'var(--font-body)', display: 'flex', alignItems: 'center', gap: '4px' }}>

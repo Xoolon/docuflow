@@ -3,18 +3,17 @@
 
 User-agent: *
 Allow: /
+Allow: /convert
+Allow: /ai
 Allow: /login
 Allow: /terms
 Allow: /privacy
 
-# Block authenticated app routes — nothing useful for Google to index here
+# Block authenticated-only routes
 Disallow: /dashboard
-Disallow: /convert
-Disallow: /ai
 Disallow: /history
 Disallow: /buy-tokens
 Disallow: /admin
 Disallow: /payment/
-Disallow: /api/
 
 Sitemap: https://www.bluskystore.shop/sitemap.xml
