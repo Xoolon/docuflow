@@ -26,14 +26,14 @@ import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 // ── ExoClick config ──────────────────────────────────────────────────────────
-const EXOCLICK_ENABLED = false   // set true after ExoClick zone setup
+const EXOCLICK_ENABLED = true   // set true after ExoClick zone setup
 
 // Paste your zone IDs from ExoClick → My Sites → Zones
 // Format: these are numeric strings like "1234567"
 const ZONES = {
-  'dashboard-top':    'ZONE_ID_1',   // Banner 728x90 or Responsive
-  'dashboard-bottom': 'ZONE_ID_2',   // Banner 728x90 or Responsive
-  'convert-result':   'ZONE_ID_3',   // Banner 468x60 or Responsive
+  'dashboard-top':    '5871330',   // Dashboard top banner
+  'dashboard-bottom': '5871332',   // Dashboard bottom banner
+  'convert-result':   '5871334',   // Convert page result banner
 }
 
 // Banner sizes to request per slot
@@ -54,22 +54,34 @@ function ExoClickZone({ zone, slot }) {
   useEffect(() => {
     if (!ref.current || !zone || zone.startsWith('ZONE_ID')) return
 
-    // ExoClick standard: inject a script tag that reads the data-cfasync attr
-    const script = document.createElement('script')
-    script.async = true
-    script.setAttribute('data-cfasync', 'false')
-    script.src = `https://a.magsrv.com/ad-provider.js`
+    // Clear any existing content
+    ref.current.innerHTML = ''
 
+    // Create the provider script first (needed for the ad to work)
+    const providerScript = document.createElement('script')
+    providerScript.async = true
+    providerScript.setAttribute('data-cfasync', 'false')
+    providerScript.src = 'https://a.magsrv.com/ad-provider.js'
+
+    // Create the ad container
     const ins = document.createElement('ins')
-    ins.className = 'eas6a97888e'
+    ins.className = 'eas6a97888e2'  // Note: using 'eas6a97888e2' from your ad code
     ins.setAttribute('data-zoneid', zone)
 
-    ref.current.innerHTML = ''
-    ref.current.appendChild(ins)
-    ref.current.appendChild(script)
+    // Create the provider push script
+    const pushScript = document.createElement('script')
+    pushScript.textContent = '(AdProvider = window.AdProvider || []).push({"serve": {}});'
 
+    // Append in the correct order
+    ref.current.appendChild(ins)
+    ref.current.appendChild(providerScript)
+    ref.current.appendChild(pushScript)
+
+    // Cleanup function
     return () => {
-      if (ref.current) ref.current.innerHTML = ''
+      if (ref.current) {
+        ref.current.innerHTML = ''
+      }
     }
   }, [zone])
 
@@ -192,7 +204,7 @@ function InternalPromo({ slot }) {
 export default function AdBanner({ slot = 'dashboard-bottom', isPaid = false }) {
   if (isPaid) return null
 
-  if (EXOCLICK_ENABLED && ZONES[slot] && !ZONES[slot].startsWith('ZONE_ID')) {
+  if (EXOCLICK_ENABLED && ZONES[slot]) {
     const size = SIZES[slot] || {}
     return (
       <div style={{
