@@ -1,222 +1,314 @@
 """
-AI API v2 — deducts exact Anthropic tokens from wallet after each generation
+AI processing endpoint — uses Claude Haiku for cost efficiency.
+
+Error codes returned to frontend:
+  402  insufficient_docuflow_tokens   — user's DocuFlow balance too low
+  429  daily_limit_reached            — free tier daily job used
+  503  ai_service_unavailable         — Anthropic API transient / network error
+  503  anthropic_credits_exhausted    — Anthropic account has no billing credits
+  500  ai_error                       — unexpected failure
 """
-import os
-import tempfile
-from datetime import datetime
-from pathlib import Path
+import logging
+from datetime import datetime, date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+import anthropic
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from loguru import logger
 
 from app.config import settings
 from app.database import get_db
 from app.models.models import (
-    Job, JobStatus, JobType, User,
+    User, Job, JobStatus, JobType,
+    TokenTransaction, TokenTxType,
     ANTHROPIC_INPUT_PER_TOKEN, ANTHROPIC_OUTPUT_PER_TOKEN,
 )
-from app.services.ai_service import process_document, InsufficientCreditsError
-from app.services.conversion import CONTENT_TYPES, convert_file
 from app.utils.auth import get_current_user
-from app.utils.tokens import deduct_ai_usage, require_tokens
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-VALID_TASKS = {"generate", "improve", "professional", "ats", "summarize", "reformat"}
 
+# ── Model ──────────────────────────────────────────────────────────────────────
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
-class AIRequest(BaseModel):
-    task: str
-    text_input: Optional[str] = None
+# ── Task prompts ───────────────────────────────────────────────────────────────
+TASK_PROMPTS = {
+    "generate": (
+        "You are an expert document writer. Create a complete, well-structured document "
+        "based on the description provided. Match the requested document type and any "
+        "format specifications. Output only the document content, no meta-commentary."
+    ),
+    "improve": (
+        "You are an expert editor. Improve the writing clarity, flow, and impact of the "
+        "provided text. Preserve the author's voice and meaning. Output only the improved text."
+    ),
+    "professional": (
+        "You are a business writing expert. Rewrite the provided text in a polished, "
+        "professional tone suitable for formal business communication. "
+        "Output only the rewritten text."
+    ),
+    "ats": (
+        "You are an expert resume writer and ATS optimization specialist. Optimize the "
+        "provided resume/CV for applicant tracking systems: use strong action verbs, "
+        "incorporate relevant keywords, ensure clean formatting. "
+        "Output only the optimized document."
+    ),
+    "summarize": (
+        "You are an expert at creating concise, accurate summaries. Summarize the provided "
+        "text into clear, well-organized key points. Preserve all critical information. "
+        "Output only the summary."
+    ),
+    "reformat": (
+        "You are a document formatting expert. Reformat the provided text with clean "
+        "structure, logical headings, and consistent formatting. "
+        "Output only the reformatted document."
+    ),
+}
+
+TASK_DISPLAY = {
+    "generate":     "Document generation",
+    "improve":      "Writing improvement",
+    "professional": "Professional rewrite",
+    "ats":          "ATS optimization",
+    "summarize":    "Summarization",
+    "reformat":     "Reformatting",
+}
+
+# ── Schemas ────────────────────────────────────────────────────────────────────
+class AIProcessRequest(BaseModel):
+    task:          str
+    text_input:    str
     document_type: Optional[str] = None
-    format_spec: Optional[str] = None
-    export_format: Optional[str] = "txt"
-
-    @field_validator("task")
-    @classmethod
-    def validate_task(cls, v):
-        if v not in VALID_TASKS:
-            raise ValueError(f"task must be one of: {sorted(VALID_TASKS)}")
-        return v
+    format_spec:   Optional[str] = None
+    export_format: str = "txt"
 
 
-@router.get("/tasks")
-async def list_tasks():
-    return {
-        "tasks": [
-            {"id": "generate",     "label": "✨ Generate Document",  "cost": "exact tokens used"},
-            {"id": "improve",      "label": "🔧 Improve Writing",     "cost": "exact tokens used"},
-            {"id": "professional", "label": "💼 Make Professional",   "cost": "exact tokens used"},
-            {"id": "ats",          "label": "🎯 Optimize for ATS",    "cost": "exact tokens used"},
-            {"id": "summarize",    "label": "📋 Summarize",           "cost": "exact tokens used"},
-            {"id": "reformat",     "label": "✂️ Reformat Cleanly",    "cost": "exact tokens used"},
-        ]
-    }
+class AIProcessResponse(BaseModel):
+    job_id:       str
+    task:         str
+    task_display: str
+    result:       str
+    tokens_used:  int
+    model:        str
 
 
-@router.get("/balance")
-async def get_balance(current_user: User = Depends(get_current_user)):
-    return {
-        "tokens_balance":    current_user.tokens_balance,
-        "tokens_consumed":   current_user.tokens_consumed,
-        "tokens_purchased":  current_user.tokens_purchased,
-        "doc_conversion_cost": 500,
-        "img_conversion_cost": 200,
-    }
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def _get_anthropic_client() -> anthropic.Anthropic:
+    if not settings.anthropic_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code":    "ai_service_unavailable",
+                "message": "AI service is not configured. Please contact support.",
+            },
+        )
+    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
-@router.post("/estimate")
-async def estimate_cost(text: str):
-    """Rough token estimate before submitting (4 chars ≈ 1 token)."""
-    input_est  = max(1, len(text) // 4)
-    output_est = input_est * 2
-    total_est  = input_est + output_est
-    cost_usd   = (
-        input_est  * ANTHROPIC_INPUT_PER_TOKEN +
-        output_est * ANTHROPIC_OUTPUT_PER_TOKEN
+def _build_user_prompt(req: AIProcessRequest) -> str:
+    parts = []
+    if req.document_type:
+        parts.append(f"Document type: {req.document_type}")
+    if req.format_spec:
+        parts.append(f"Format requirements: {req.format_spec}")
+    parts.append("")
+    parts.append(
+        f"Description:\n{req.text_input}"
+        if req.task == "generate"
+        else f"Text to process:\n{req.text_input}"
     )
-    return {
-        "estimated_tokens":  total_est,
-        "estimated_cost_usd": round(cost_usd, 6),
-        "input_estimate":    input_est,
-        "output_estimate":   output_est,
-    }
+    return "\n".join(parts)
 
 
-@router.post("/process")
-async def process(
-    request:      AIRequest,
-    db:           Session = Depends(get_db),
+def _check_daily_free_limit(user: User, db: Session) -> bool:
+    """True if free user has already used their daily AI generation."""
+    if (user.tokens_purchased or 0) > 0:
+        return False
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    used_today = (
+        db.query(Job)
+        .filter(
+            Job.user_id   == user.id,
+            Job.job_type  == JobType.ai_generation,
+            Job.status    == JobStatus.completed,
+            Job.created_at >= today_start,
+        )
+        .count()
+    )
+    limit = getattr(settings, "free_ai_generations_per_day", 1)
+    return used_today >= limit
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
+@router.post("/process", response_model=AIProcessResponse)
+async def process_ai(
+    req:          AIProcessRequest,
     current_user: User    = Depends(get_current_user),
+    db:           Session = Depends(get_db),
 ):
-    text = (request.text_input or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text_input must not be empty.")
+    if req.task not in TASK_PROMPTS:
+        raise HTTPException(status_code=400, detail="Invalid task type.")
 
-    # Soft pre-flight: rough estimate so we fail fast before the API call
-    estimated = max(1, len(text) // 4) * 3
-    require_tokens(current_user, min(estimated // 2, 100))
+    # Daily free limit
+    if _check_daily_free_limit(current_user, db):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code":    "daily_limit_reached",
+                "message": "You've used your free AI generation for today. "
+                           "Buy tokens to unlock unlimited AI jobs.",
+            },
+        )
 
+    # Input length limit
+    max_chars = (
+        getattr(settings, "paid_ai_max_input_tokens",  2000) * 4
+        if (current_user.tokens_purchased or 0) > 0
+        else getattr(settings, "free_ai_max_input_tokens", 500) * 4
+    )
+    if len(req.text_input) > max_chars:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Input too long. Maximum {max_chars // 4} words for your plan.",
+        )
+
+    # DocuFlow token balance check
+    MIN_BALANCE = 100
+    if (current_user.tokens_balance or 0) < MIN_BALANCE:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code":     "insufficient_docuflow_tokens",
+                "balance":  current_user.tokens_balance,
+                "required": MIN_BALANCE,
+                "message":  "Your DocuFlow token balance is too low. Top up to continue.",
+            },
+        )
+
+    # Create Job record
     job = Job(
         user_id   = current_user.id,
         job_type  = JobType.ai_generation,
         status    = JobStatus.processing,
-        ai_task   = request.task,
-        ai_prompt = f"{request.task}: {text[:200]}",
+        ai_task   = req.task,
+        ai_prompt = req.text_input[:500],
     )
     db.add(job)
     db.commit()
     db.refresh(job)
 
+    # ── Anthropic call ─────────────────────────────────────────────────────────
+    client = _get_anthropic_client()
     try:
-        result = await process_document(
-            task             = request.task,
-            user_input       = text,
-            max_input_tokens = current_user.tokens_balance,
-            format_spec      = request.format_spec,
-            document_type    = request.document_type,
+        logger.info(f"Calling Anthropic model={CLAUDE_MODEL} user={current_user.id}")
+        response = client.messages.create(
+            model      = CLAUDE_MODEL,
+            max_tokens = 4096,
+            system     = TASK_PROMPTS[req.task],
+            messages   = [{"role": "user", "content": _build_user_prompt(req)}],
         )
 
-        # Deduct EXACT tokens reported by Anthropic API
-        usage = deduct_ai_usage(
-            db,
-            current_user,
-            input_tokens  = result["input_tokens"],
-            output_tokens = result["output_tokens"],
-            job_id        = job.id,
-            task          = request.task,
-        )
+    except anthropic.AuthenticationError:
+        logger.error("Anthropic AuthenticationError — API key invalid")
+        job.status = JobStatus.failed; db.commit()
+        raise HTTPException(status_code=503, detail={"code": "ai_service_unavailable", "message": "AI service configuration error. Please contact support."})
 
-        job.status         = JobStatus.completed
-        job.ai_result      = result["result"]
-        job.input_tokens   = result["input_tokens"]
-        job.output_tokens  = result["output_tokens"]
-        job.total_tokens   = result["input_tokens"] + result["output_tokens"]
-        job.tokens_charged = usage["tokens_charged"]
-        job.api_cost_usd   = usage["api_cost_usd"]
-        job.completed_at   = datetime.utcnow()
-        db.commit()
+    except anthropic.PermissionDeniedError:
+        logger.error("Anthropic PermissionDeniedError — account has no credits")
+        job.status = JobStatus.failed; db.commit()
+        raise HTTPException(status_code=503, detail={"code": "anthropic_credits_exhausted", "message": "AI service is temporarily unavailable. Please try again later.", "anthropic_issue": True})
 
-        export_fmt = (request.export_format or "txt").lower().lstrip(".")
+    except anthropic.RateLimitError:
+        logger.warning("Anthropic rate limit hit")
+        job.status = JobStatus.failed; db.commit()
+        raise HTTPException(status_code=503, detail={"code": "ai_service_unavailable", "message": "AI service is busy. Please wait a moment and try again."})
 
-        if export_fmt == "txt":
-            return {
-                "job_id":           job.id,
-                "task":             result["task"],
-                "task_display":     result["task_display"],
-                "result":           result["result"],
-                "tokens_used":      job.total_tokens,
-                "tokens_remaining": current_user.tokens_balance,
-                "api_cost_usd":     job.api_cost_usd,
-                "model":            result["model"],
-            }
+    except anthropic.APIStatusError as e:
+        logger.error(f"Anthropic APIStatusError {e.status_code}: {e.message}")
+        job.status = JobStatus.failed; db.commit()
+        code = "anthropic_credits_exhausted" if e.status_code == 402 else "ai_service_unavailable"
+        raise HTTPException(status_code=503, detail={"code": code, "message": "AI service is temporarily unavailable. Please try again later."})
 
-        # Export to another format (docx, pdf, etc.)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            txt_path = os.path.join(tmpdir, "result.txt")
-            Path(txt_path).write_text(result["result"], encoding="utf-8")
-            out_path = os.path.join(tmpdir, f"result.{export_fmt}")
-            convert_file(txt_path, "txt", export_fmt, out_path)
-            file_bytes = Path(out_path).read_bytes()
-
-        return StreamingResponse(
-            iter([file_bytes]),
-            media_type = CONTENT_TYPES.get(export_fmt, "application/octet-stream"),
-            headers    = {
-                "Content-Disposition":
-                    f'attachment; filename="docuflow_{request.task}.{export_fmt}"',
-                "X-Job-Id":           job.id,
-                "X-Tokens-Used":      str(job.total_tokens),
-                "X-Tokens-Remaining": str(current_user.tokens_balance),
-                "Access-Control-Expose-Headers":
-                    "X-Job-Id,X-Tokens-Used,X-Tokens-Remaining",
-            },
-        )
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        job.status        = JobStatus.failed
-        job.error_message = str(e)
-        db.commit()
-        raise HTTPException(status_code=400, detail=str(e))
-    except InsufficientCreditsError as e:  # ← new block
-        job.status = JobStatus.failed
-        job.error_message = str(e)
-        db.commit()
-        raise HTTPException(status_code=402, detail=str(e))
     except Exception as e:
-        job.status        = JobStatus.failed
-        job.error_message = str(e)
-        db.commit()
-        logger.error(f"AI job {job.id} failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected AI error: {e}")
+        job.status = JobStatus.failed; db.commit()
+        raise HTTPException(status_code=500, detail={"code": "ai_error", "message": "An unexpected error occurred. Please try again."})
+
+    # ── Persist result ─────────────────────────────────────────────────────────
+    result_text   = response.content[0].text if response.content else ""
+    input_tokens  = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    total_tokens  = input_tokens + output_tokens
+    model_used    = getattr(response, "model", CLAUDE_MODEL)
+    api_cost      = (input_tokens * ANTHROPIC_INPUT_PER_TOKEN) + (output_tokens * ANTHROPIC_OUTPUT_PER_TOKEN)
+
+    # Deduct from user wallet
+    new_balance = max(0, (current_user.tokens_balance or 0) - total_tokens)
+    current_user.tokens_balance  = new_balance
+    current_user.tokens_consumed = (current_user.tokens_consumed or 0) + total_tokens
+
+    # Ledger entry — matches TokenTransaction schema exactly
+    tx = TokenTransaction(
+        user_id       = current_user.id,
+        tx_type       = TokenTxType.ai_usage,
+        tokens_delta  = -total_tokens,
+        tokens_after  = new_balance,
+        input_tokens  = input_tokens,
+        output_tokens = output_tokens,
+        api_cost_usd  = api_cost,
+        job_id        = job.id,
+        description   = f"AI: {TASK_DISPLAY.get(req.task, req.task)}",
+    )
+    db.add(tx)
+
+    # Update job
+    job.status         = JobStatus.completed
+    job.ai_result      = result_text
+    job.input_tokens   = input_tokens
+    job.output_tokens  = output_tokens
+    job.total_tokens   = total_tokens
+    job.tokens_charged = total_tokens
+    job.api_cost_usd   = api_cost
+    job.completed_at   = datetime.utcnow()
+    db.commit()
+
+    return AIProcessResponse(
+        job_id       = job.id,
+        task         = req.task,
+        task_display = TASK_DISPLAY.get(req.task, req.task),
+        result       = result_text,
+        tokens_used  = total_tokens,
+        model        = model_used,
+    )
 
 
 @router.get("/history")
-async def get_history(
+async def ai_history(
     limit:        int     = 20,
-    db:           Session = Depends(get_db),
     current_user: User    = Depends(get_current_user),
+    db:           Session = Depends(get_db),
 ):
     jobs = (
         db.query(Job)
-        .filter(Job.user_id == current_user.id, Job.job_type == JobType.ai_generation)
+        .filter(
+            Job.user_id  == current_user.id,
+            Job.job_type == JobType.ai_generation,
+        )
         .order_by(Job.created_at.desc())
-        .limit(min(limit, 100))
+        .limit(limit)
         .all()
     )
     return [
         {
-            "id":          j.id,
-            "status":      j.status,
-            "task":        j.ai_task,
-            "tokens_used": j.total_tokens,
-            "api_cost_usd":j.api_cost_usd,
-            "created_at":  j.created_at.isoformat(),
+            "id":           j.id,
+            "task":         j.ai_task,
+            "task_display": TASK_DISPLAY.get(j.ai_task or "", j.ai_task or ""),
+            "status":       j.status.value if hasattr(j.status, "value") else j.status,
+            "tokens_used":  j.tokens_charged or 0,
+            "model_used":   CLAUDE_MODEL,
+            "created_at":   j.created_at.isoformat() if j.created_at else None,
         }
         for j in jobs
     ]
@@ -226,45 +318,53 @@ async def get_history(
 async def extract_text(
     file:         UploadFile = File(...),
     current_user: User       = Depends(get_current_user),
+    db:           Session    = Depends(get_db),
 ):
-    """Extract raw text from an uploaded file before AI processing."""
+    """Extract plain text from uploaded PDF/DOCX/TXT for AI input."""
+    import io
     content  = await file.read()
-    filename = file.filename or "upload.bin"
-    ext      = Path(filename).suffix.lower().lstrip(".")
-
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Max 5 MB for text extraction.")
+    filename = (file.filename or "").lower()
+    text     = ""
 
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            in_path = os.path.join(tmpdir, f"input.{ext}")
-            Path(in_path).write_bytes(content)
+        if filename.endswith(".txt") or filename.endswith(".md"):
+            text = content.decode("utf-8", errors="replace")
 
-            if ext == "pdf":
-                import pdfplumber
-                with pdfplumber.open(in_path) as pdf:
-                    text = "\n\n".join(p.extract_text() or "" for p in pdf.pages)
-            elif ext in ("docx", "doc"):
-                from docx import Document
-                doc  = Document(in_path)
+        elif filename.endswith(".pdf"):
+            try:
+                import pypdf
+                reader = pypdf.PdfReader(io.BytesIO(content))
+                text = "\n".join(p.extract_text() or "" for p in reader.pages)
+            except ImportError:
+                raise HTTPException(status_code=400, detail="PDF extraction not available.")
+
+        elif filename.endswith(".docx"):
+            try:
+                import docx
+                doc  = docx.Document(io.BytesIO(content))
                 text = "\n".join(p.text for p in doc.paragraphs)
-            elif ext in ("txt", "md", "html", "rtf"):
-                text = Path(in_path).read_text(encoding="utf-8", errors="replace")
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot extract text from .{ext} files.",
-                )
+            except ImportError:
+                raise HTTPException(status_code=400, detail="DOCX extraction not available.")
 
-        # Truncate to roughly what the user can afford
-        max_chars = current_user.tokens_balance * 4
-        if len(text) > max_chars:
-            text = text[:max_chars] + "\n\n[Truncated to your token balance limit]"
-
-        return {"text": text, "char_count": len(text)}
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type for text extraction.")
 
     except HTTPException:
         raise
-    except Exception as exc:
-        logger.error(f"Text extraction error: {exc}")
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {exc}")
+    except Exception as e:
+        logger.error(f"Text extraction error: {e}")
+        raise HTTPException(status_code=400, detail="Could not extract text from this file.")
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No text could be extracted from this file.")
+
+    return {"text": text.strip(), "characters": len(text)}
+
+
+@router.get("/status")
+async def ai_status():
+    return {
+        "service":    "Anthropic Claude Haiku",
+        "configured": bool(settings.anthropic_api_key),
+        "model":      CLAUDE_MODEL,
+    }
