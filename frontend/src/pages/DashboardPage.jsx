@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import api from '../utils/api'
-import AdBanner from '../components/AdBanner.jsx'
+import AdBanner from '../components/Adbanner.jsx'
 import {
   ArrowLeftRight, Sparkles, Zap, ArrowRight,
   CheckCircle2, Crown, ShoppingCart,
