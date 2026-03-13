@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore'
 import api from '../utils/api'
 import toast from 'react-hot-toast'
 import AdBanner from '../components/AdBanner.jsx'
-import LoginPromptModal from '../components/LoginPromptModal'
+import LoginPromptModal from '../components/LoginPromptModal.jsx'
 import {
   Upload, ArrowRight, Download, X,
   AlertCircle, Lock, RefreshCw, ShoppingCart,
